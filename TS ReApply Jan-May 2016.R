@@ -1,26 +1,31 @@
-# Lead Re-Apply Data Loading ----
-library(readxl)
-dat <- read_excel(path = "/Users/Danny/Downloads/List Reapply_Jan-May'16_78577.xlsx", 
-                   sheet = 1, col_names = TRUE)
-detach(package:readxl, unload = TRUE)
+# Data Loading ----
+library(readr)
+dat <- read_tsv(file = "/Users/Danny/Share Win7/qry_TSReApply_Result.txt",
+                   col_types = cols(.default = "c"), na = c("", " ", "NA"))
+detach(package:readr, unload = TRUE)
+names(dat) <- make.names(names(dat))
 
-# Lead Re-Apply Data Cleansing ----
-names(dat) <- c("Data.Mth", "ID", "THAI.NAME", "ENG.NAME", "ENG.LAST.NAME", 
-                "AGENT.SOURCE.CODE", "AGENT.SOURCE.ID", "Old.REASON", "Old.Product")  # Rename colnames
-
+# Data Preparation ----
 library(dplyr)
 reapp <- dat %>%
-  filter(!is.na(ID)) %>%  # Remove blank row
-  mutate(Date = as.Date(paste0("2016-", Data.Mth, "-01"))) %>% # Create date
-  mutate(Old_Product = ifelse(grepl("VRL", Old.Product), "RL", "CC")) %>%
-  mutate(Old_Reason = substr(Old.REASON, 2, 2)) %>% # Extract Old Reason
-  mutate(Old_ReasonDESC = substr(Old.REASON, 4, 6))  # Extract Old Reason Code
+  filter(Branch_Code == "REJ") %>%
+  mutate(Old_Date = as.Date(paste0("2015-", Data.Mth, "-01"))) %>% 
+  mutate(Old_Product = ifelse(grepl("VRL", Product.CC.PL.RL.), "RL", "CC")) %>%
+  mutate(New_Date = as.Date(paste0(Month, "01"), format = "%Y%m%d")) %>%
+  mutate(Diff_Month = 12*(as.numeric(format(New_Date, "%Y")) - as.numeric(format(Old_Date, "%Y"))) +
+                          (as.numeric(format(New_Date, "%m")) - as.numeric(format(Old_Date, "%m")))) %>%
+  mutate(AGE = as.integer(AGE))
+  
+# Select predictor ----
+reg <- reapp %>%
+  select(Old_Date, Old_Reason, Old_Reason_Desc, Old_Product, AGENT.SOURCE.ID,
+         Result, Result_Description, New_Date, Occupation_Code, Doc_Waive, AGE,
+         Appr, Diff_Month)
 
-# Result data Loading ----
-library(readr)
-result <- read_tsv(file = "/Users/Danny/Share Win7/qry_ALLProduct_KPI_Export.txt",
-                   col_types = cols(.default = "c"), na = c("", " ", "NA"))
-
+# Exploratory Data Analysis ----
 library(ggplot2)
-ggplot(data = data, aes(x = date)) +
-  geom_bar(aes(fill = Old_Product))
+ggplot(data = reg, aes(x = AGE, col = Appr)) +
+  geom_bar()
+
+saveRDS(reg, file = "ReApplyMap.RDS")
+
