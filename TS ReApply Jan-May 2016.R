@@ -183,12 +183,27 @@ qda_fit <- qda(Appr ~ ., data = reg_train)
 
 # Classification with KNN ----
 library(class)
-train_X <- as.matrix(reg_train[, -6])
-test_X <- as.matrix(reg_test[, -6])
+train_X <- as.matrix(reg_train[, -c(1,2,3,4,6)])  # Remove categorical data & turn to matrix
+test_X <- as.matrix(reg_test[, -c(1,2,3,4,6)])  # Remove categorical data & turn to matrix
 train_Direction <- as.matrix(reg_train["Appr"])
 
-set.seed(1)
-knn_pred <- knn(train_X, test_X, train_Direction, k = 3)
+# Finding best k
+best_k <- function(k) {
+  out <- data.frame()
+  set.seed(1)
+  for(i in 1:k) {
+    knn_pred <- knn(train_X, test_X, train_Direction, i)
+    AUC <- mean(reg_test$Appr == knn_pred)
+    out <- rbind(out, c(i, AUC))
+  }
+  colnames(out) <- c("k","AUC")
+  return(out)
+}
+
+t <- best_k(40)
+plot(t)
+# best k = 26 yield best result
+
 
 # Regression analysis with library caret ----
 library(caret)
