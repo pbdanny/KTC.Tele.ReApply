@@ -202,7 +202,7 @@ best_k <- function(k) {
 
 t <- best_k(40)
 plot(t)
-# best k = 26 yield best result
+# best k >= 16 yield best result
 
 
 # Regression analysis with library caret ----
