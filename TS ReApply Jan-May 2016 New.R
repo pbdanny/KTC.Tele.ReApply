@@ -1,12 +1,14 @@
 # 1) Load data ----
 library(readxl)
-lead <- read_excel("/Users/Danny/Downloads/List Reapply_Jan-May'16_78577.xlsx", sheet = 1)
+lead <- read_excel("/Users/Danny/Documents/R Project/KTC.Tele.ReApply/List Reapply_Jan-May'16_78577 11.43.10 PM.xlsx", 
+                   sheet = 1)
 lead <- lead[!is.na(lead$ID), ]
 cc15 <- read_excel("/Users/Danny/Documents/R Project/KTC.Tele.ReApply/Mapping_CC_2015-2016.xlsx",
                    sheet = "CC_2015")
 cc16 <- read_excel("/Users/Danny/Documents/R Project/KTC.Tele.ReApply/Mapping_CC_2015-2016.xlsx",
                    sheet = "CC_2016")
 occupation <- read_excel("/Users/Danny/Share Win7/Occupation_Code_Frontend.xlsx", sheet = 1)
+province <- read_excel("/Users/Danny/Share Win7/province.xlsx", sheet = "Region_KTC")
 names(lead) <- make.names(names(lead))
 names(cc15) <- make.names(names(cc15))
 names(cc16) <- make.names(names(cc16))
@@ -18,32 +20,34 @@ names(cc16) <- make.names(names(cc16))
 library(dplyr)
 print(paste0("Total Lead : ", nrow(lead)))
 print(paste0("Distinct Lead :", nrow(distinct(lead, ID))))
-# Total Reject Lead 201506-201510 78,577, Distinct lead 74990
+# Total Reject Lead 201506-201510 78,577, Distinct lead 74,990
 # Duplicate obs 3587, why?
 
-# only the duplicate obs
+# Select only the duplicate obs
 leadDup <- lead %>%
   arrange(ID, Data.Mth) %>%
   filter(duplicated(ID))
 
+# Select only the first duplicated record 
 leadDupFirstLast <- lead %>%
   arrange(ID, Data.Mth) %>%
   filter(duplicated(ID) | duplicated(ID, fromLast = TRUE)) %>%  # Filter all the duplicated (include first obs)
   filter(!duplicated(ID)) %>%  #  Filter only first obs
   left_join(leadDup, by = c("ID", "ID"))  # join with the duplicated 
 
+# Check if Duplication in many months : All are truely 
 leadDupFirstLast %>%
   count(Data.Mth.x == Data.Mth.y)
-# All data month are truely different
 
+# How mush duplicated by source code? : Dup by same Source Code 2560, Different Source Code 1027
 leadDupFirstLast %>%
   count(AGENT.SOURCE.CODE.x == AGENT.SOURCE.CODE.y)
-# Duplicate by same Source Code = 2560, Different Source Code = 1027
 
+# How mush duplicated by Product : same products 2507; diff product = 1080
 leadDupFirstLast %>%
   count(Product.CC.PL.RL..x == Product.CC.PL.RL..y)
-# Duplicate by same Product = 2507, Different Source Code = 1080
 
+# Cross tabulation duplication by source code - products
 leadDupFirstLast %>%
   mutate(sameSource = (AGENT.SOURCE.CODE.x == AGENT.SOURCE.CODE.y)) %>%
   mutate(sameProduct = (Product.CC.PL.RL..x == Product.CC.PL.RL..y)) %>%
@@ -54,91 +58,79 @@ leadDupFirstLast %>%
 # Diff source code ; same product 610
 # Diff source code ; diff product 417
 
+# 2.2) Reject CC lead and CC mapping analysis
 
+library(dplyr)
+lead %>%
+  filter(!grepl("^[A-Z]{2}L", Product.CC.PL.RL.)) %>% # select not PL
+  filter(!duplicated(ID)) %>%
+  summarise(n = n())
+# Unique ID from Reject CC 14316
 
-# 1) Telesales Resales "Branch_Code = "REJ" = 59
-# 2) Real duplicated 
+cc15 %>%
+  filter(!duplicated(ID)) %>%
+  summarise(n = n())
+# Also unique ID 14316
 
+# X check lead - cc15
+l <- lead %>%
+  filter(!grepl("^[A-Z]{2}L", Product.CC.PL.RL.)) %>% # select not PL
+  filter(!duplicated(ID)) %>%
+  left_join(cc15, by = c("ID" = "ID")) %>%
 
-# filter(substr(`Product(CC,PL,RL)`, 3,3) != 'L') %>%  # Filter only loan
-
-
-dup15 <- cc15 %>%
-  filter(duplicated(ID) | duplicated(ID, fromLast = TRUE)) %>%
-  arrange(ID, ApproveDate)
-
-
-# 2.2) Combine data and analysis
+# 2.3) Data preparation for Learning model
 
 library(dplyr)
 
-dupID1516 <- cc16 %>%
-  bind_rows(cc15) %>%  # Combine cc15 + cc16
-  arrange(ID, ApproveDate) %>%
-  # since fn duplicate() will assume the first record as unique, and the follower will be duplicate
-  # then use technique duplicate from last and OR both; giive all duplicate data 
-  filter(duplicated(ID) | duplicated(ID, fromLast = TRUE))  # Select all duplicated ID
-
-notContatct1516 <- cc16 %>%
-  bind_rows(cc15) %>%
-  arrange(ID, ApproveDate) %>%
-  filter(!(duplicated(ID) | duplicated(ID, fromLast = TRUE)))
-
-
-
-# Check if which data month 
-
-
-hist(dupID1516$n, freq = TRUE)
-table(dupID1516$n)
-
-# 2.2) Check duplication caused
-
-topdup <- dupID1516 %>%
-  filter(n >= 4)
-
-topdupcc1516 <- cc15 %>%
+# Combine CC data 15-16 filter only Branch = REJ , latest result
+cc1516Rej <- cc15 %>%
   bind_rows(cc16) %>%
-  left_join(topdup) %>%
-  group_by(ID, Channel_Group) %>%
-  summarise(n = n()) %>%
-  arrange(desc(n))
+  filter(Branch_Code == "REJ") %>%
+  arrange(ID, desc(ApproveDate)) %>%  # incase of duplicate REJ choose last one on top
+  filter(!duplicated(ID)) %>% # Select the first obs 
+  left_join(occupation, by = c("Occupation" = "Desc")) %>%
+  rename(OccupationCode = Code) %>%
+  mutate(Left2_Zipcode = substr(Zipcode, 1, 2)) %>%
+  left_join(province) %>%
+  select(-c(3:9), -Work_Place, -Spending_Range, -Spending60, -Occupation,
+         -Income_Range, -QUEUE, -Channel, -Channel_Group, -Left2_Zipcode, -Province_Tha, -Region_Tha,
+         -RefCode, -City_Type, -Province_Eng, -Region_Eng)
 
-tab <- table(topdupcc1516$Channel_Group, topdupcc1516$ID)
+# Create pre Reject project data
+preRej <- cc15 %>%
+  arrange(ID, ApproveDate) %>%
+  filter(!duplicated(ID)) %>%
+  left_join(occupation, by = c("Occupation" = "Desc")) %>%
+  rename(OccupationCode = Code) %>%
+  mutate(Left2_Zipcode = substr(Zipcode, 1, 2)) %>%
+  left_join(province) %>%
+  select(-c(3:9), -Work_Place, -Spending_Range, -Spending60, -Occupation,
+         -Income_Range, -QUEUE, -Channel, -Channel_Group, -Left2_Zipcode, -Province_Tha, -Region_Tha,
+         -RefCode, -City_Type, -Province_Eng, -Region_Eng)
 
-# Start with cc 2016 result form Souce_Code REJ
-
-library(dplyr)
-
-cc1516 <- cc16 %>%
-  bind_rows(cc15) %>%  # Combine cc15 - cc16
-  filter(Branch_Code == "REJ") %>%  # Choose only REJ
-  left_join(cc15, by = c("ID" = "ID")) %>%  # left_join with cc15 key = ID
-  left_join(occupation, by = c("Occupation.x" = "Desc")) %>%
-  left_join(occupation, by = c("Occupation.y" = "Desc")) %>%
-  rename(OccupationCode.x = Code.x) %>%
-  rename(OccupationCode.y = Code.y) %>%
-  filter(!is.na(OccupationCode.x) & !is.na(OccupationCode.y)) %>%
-  mutate(ApproveDate.x = as.Date(ApproveDate.x)) %>%  # Covnert AppovedDate to Data
-  arrange(ApproveDate.x) %>%  # Sort ascending by ApprovedDate 
-  distinct(ID, .keep_all = TRUE) %>%  # Distinct by ID (keep the first one) , keep all varibles
-  mutate(ApproveDate.y = as.Date(ApproveDate.y)) %>%
+# Join after Reject project <- Pre Project
+cc1516RejPre <- cc1516Rej %>%
+  left_join(preRej, by = c("ID" =  "ID")) %>%
   mutate(Appl_In_Date.x = as.Date(Appl_In_Date.x, format("%d/%m/%Y"))) %>%
   mutate(Appl_In_Date.y = as.Date(Appl_In_Date.y, format("%d/%m/%Y"))) %>%
-  # Create diff flag for analysis
+  mutate_each(funs(as.Date), ApproveDate.x, ApproveDate.y, DOB.x, DOB.y) %>%
+  # Remove Occupation Code = n/a
+  filter(!is.na(OccupationCode.x) & !is.na(OccupationCode.y)) %>%
+  # Create features for analysis
   mutate(Monthly.Salary.diff = Monthly_Salary.x - Monthly_Salary.y) %>%
   mutate(OccupationCode.diff.flag = ifelse(OccupationCode.x == OccupationCode.y, 0, 1)) %>%
   mutate(ZipCode.diff.flag = ifelse(Zipcode.x == Zipcode.y, 0, 1))
 
+rm(list = c("cc1516Rej", "lead", "preRej", "province"))
+
 # 3) Explanatory Data Analysis ----
 
-
-# 4) Predictive model creation ----
+# 4) Machine Learning with Generalized Linear Model methods creation ----
 
 # 4.1) Select features
-df <- cc1516 %>%
-  select(Monthly_Salary.y, Monthly.Salary.diff, Age.y, 
-         OccupationCode.diff.flag, ZipCode.diff.flag, Result.x) %>%
+df <- cc1516RejPre %>%
+  select(Monthly_Salary.y, Monthly.Salary.diff, Age.y,
+         OccupationCode.diff.flag, Result.x) %>%
   mutate(Appr.flag = ifelse(Result.x == "A", 1, 0)) %>%
   select(-Result.x)
 
@@ -155,7 +147,7 @@ set.seed(2)
 df.train <- df.train[sample(nrow(df.train)), ]
 
 # Create 5 equally size folds idx
-n_folds <- 5
+n_folds <- 10
 folds <- cut(seq(1, nrow(df.train)), breaks = n_folds, labels = FALSE)
 
 # 4.4) Perform ML & 5 fold cross validation
@@ -191,5 +183,8 @@ for(i in 1:n_folds){
   auc <- auc@y.values[[1]]
   model.perf <- rbind(model.perf, auc)  # Store each cv accuracy in model
 }
-
+# Average model accuracy
 mean(model.perf[, 1])
+
+# Anova test
+anova(glm_fit, test = "Chisq")
