@@ -151,7 +151,7 @@ folds <- cut(seq(1, nrow(df.train)), breaks = n_folds, labels = FALSE)
 
 # 4.4) Perform ML & 5 fold cross validation
 
-model.perf <- data.frame()  # Create model.perf 
+model.perf <- data.frame()  # Create model.perf for store auc in each validation
 
 for(i in 1:n_folds){
   
@@ -166,10 +166,10 @@ for(i in 1:n_folds){
   
   # measure model performanc with ROC & AUC
   library(ROCR)
-  cv.pred <- predict(glm_fit, newdata = df.cv.folds, type = "response")
+  cv.pred <- predict(glm_fit, newdata = na.omit(df.cv.folds), type = "response")
   
   # Create ROC Curve
-  pred <- prediction(cv.pred, df.cv.folds$Appr.flag)  # Create ROCR::prediction object
+  pred <- prediction(cv.pred, na.omit(df.cv.folds)$Appr.flag)  # Create ROCR::prediction object
   
   # Create ROCR:performance object tpr = true positive, fpr = false positive
   pred.perf <- performance(pred, measure = "tpr", x.measure = "fpr")
@@ -177,16 +177,22 @@ for(i in 1:n_folds){
   plot(pred.perf, main = paste0(n_folds, " folds cv #", i))
   dev.off()
   
-  # Calculate AUC
+  # Calculate Area Under Curve (auc) and precision
   auc <- performance(pred, measure = "auc")  # Create ROCR:performance object auc = accuracy
   auc <- auc@y.values[[1]]
-  model.perf <- rbind(model.perf, auc)  # Store each cv accuracy in model
+  model.perf <- rbind(model.perf, auc)  # Store each cv auc in model
 }
-# Average model accuracy
+# Average each CV model auc (area under curve)
 mean(model.perf[, 1])
 
 # Anova test
 anova(glm_fit, test = "Chisq")
+
+# Use precision : Accept high FP
+
+# Precision {TP(TP+FP)} model = 1/(1+4) = 0.2
+# Precision all recurrence (all 1) precision = 55/(55+375) = 0.12
+# Presision all no recurrence (all 0) precision = 0/(0+0) = 0
 
 ## 5) ML model wtih caret package ----
 
@@ -200,17 +206,24 @@ df <- cc1516RejPre %>%
   mutate(Appr.flag = ifelse(Result.x == "A", 1, 0)) %>%
   select(-Result.x)
 
+# 5.2) Balance data with SMOTE methods
+table(df$Appr.flag)
+df <- as.data.frame(na.omit(df))
+df$Appr.flag <- as.factor(df$Appr.flag)
+ndf <- SMOTE(Appr.flag ~ ., df, proc.over = 200, proc.under = 100) # Over sampling minority group (Appr.flag = 1) 2 times
+table(ndf$Appr.flag)
+
 # 5.2) Create index for training data
 # Evenly distributed with result data use createDataPartition fn
 
 library(caret)
 
-result <- data.frame(df)[,"Appr.flag"]
+result <- data.frame(ndf)[,"Appr.flag"]
 train_idx <- createDataPartition(result, p = 0.8, list = FALSE)
 rm(result)
 
 # 5.3) Training model
-df <- df %>%
+df <- ndf %>%
   mutate(Appr.flag = factor(Appr.flag))
 
 train <- as.data.frame(df[train_idx, ])
@@ -246,13 +259,16 @@ head(pred_prob)
 
 library(ROCR)
 
-# Convert to numeric data for ROC Plot
-pred_result_logi <- as.numeric((pred_result))
-test_Appr_log <- as.numeric(as.logical(na.omit(test)[,"Appr.flag"]))
-pr <- prediction(pred_result_logi, test_Appr_log)
-prf <- performance(pr, measure = "tpr", x.measure = "fpr")
-plot(prf)
+# Create ROC Curve
+pred <- prediction(as.numeric(as.character(pred_result)), 
+                   as.numeric(as.character(test$Appr.flag)))  # Create ROCR::prediction object
 
-auc <- performance(pr, measure = "auc")
+# Create ROCR:performance object tpr = true positive, fpr = false positive
+pred.perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+plot(pred.perf)
+
+# Calculate Area Under Curve (auc) and precision
+auc <- performance(pred, measure = "auc")  # Create ROCR:performance object auc = accuracy
 auc <- auc@y.values[[1]]
 auc
+
