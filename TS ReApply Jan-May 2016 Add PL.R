@@ -171,22 +171,17 @@ dat.rej <- dat %>%
   filter(Age < 1 | !is.na(Age)) %>%
   # Create target varible Result in D, R = 0 , Result in A & Product = CC -> 1, 
   # Result in A & Product = PL -> 1
-  mutate(Target = if_else(Result == "A" & Product == "CC", "1", 
-         if_else(Result == "A" & Product == "PROUD", "2", "0"))) %>%
+  mutate(Target = if_else(Result == "A" & Product == "CC", 1, 
+         if_else(Result == "A" & Product == "PROUD", 1, 0))) %>%
   # Flag decline reason realted to Cash & Debt 
   mutate(Decline.Cash = if_else(Result_Description %in% 
                                  c("D01", "D02", "D09", "D10", "D11", "D21", 
-                                   "D22", "D23", "D24"), "1", "0")) %>%
+                                   "D22", "D23", "D24"), 1, 0)) %>%
   select(-Product, -Result, -Result_Description)
 
 ## 4) Machine Learning with Generalized Linear Model methods creation ----
 
 # 4.1) Select features
-df <- cc1516RejPre %>%
-  select(Age.y, Monthly.Salary.diff, 
-          Result.x) %>%
-  mutate(Appr.flag = ifelse(Result.x == "A", 1, 0)) %>%
-  select(-Result.x)
 
 # 4.2) Split train and test
 set.seed(1)
@@ -216,7 +211,7 @@ for(i in 1:n_folds){
   df.cv.folds <- df.train[-df.train.folds.idx, ]
   
   # train GLM model
-  glm_fit <- glm(Appr.flag ~ ., data = df.train.folds, family = "binomial"(link = "logit"),
+  glm_fit <- glm(Target ~ ., data = df.train.folds, family = "binomial"(link = "logit"),
                  na.action = na.omit)
   
   # measure model performanc with ROC & AUC
@@ -224,7 +219,7 @@ for(i in 1:n_folds){
   cv.pred <- predict(glm_fit, newdata = na.omit(df.cv.folds), type = "response")
   
   # Create ROC Curve
-  pred <- prediction(cv.pred, na.omit(df.cv.folds)$Appr.flag)  # Create ROCR::prediction object
+  pred <- prediction(cv.pred, na.omit(df.cv.folds)$Target)  # Create ROCR::prediction object
   
   # Create ROCR:performance object tpr = true positive, fpr = false positive
   pred.perf <- performance(pred, measure = "tpr", x.measure = "fpr")
@@ -253,33 +248,31 @@ anova(glm_fit, test = "Chisq")
 
 # 5.1) Select features
 
-library(dplyr)
-
-df <- cc1516RejPre %>%
-  select(Monthly.Salary.diff, Age.y,
-         Result.x) %>%
-  mutate(Appr.flag = ifelse(Result.x == "A", 1, 0)) %>%
-  select(-Result.x)
+df <- dat.rej
 
 # 5.2) Balance data with SMOTE methods
-table(df$Appr.flag)
-df <- as.data.frame(na.omit(df))
-df$Appr.flag <- as.factor(df$Appr.flag)
-ndf <- SMOTE(Appr.flag ~ ., df, proc.over = 200, proc.under = 100) # Over sampling minority group (Appr.flag = 1) 2 times
-table(ndf$Appr.flag)
+
+library(DMwR)
+table(df$Target)
+df <- as.data.frame(na.omit(df))  # SMOTE apply only to dataframe
+df$Target <- as.factor(df$Target)  # SMOTE apply only to factor data (since it boot straping with k nearest neighbours)
+df$City_Type_Code <- as.factor(df$City_Type_Code)
+df$Decline.Cash <- as.factor(df$Decline.Cash)
+ndf <- SMOTE(Target ~ ., df, proc.over = 100, proc.under = 200) # Over sampling minority group (Target = 1) 2 times
+table(ndf$Target)
 
 # 5.2) Create index for training data
 # Evenly distributed with result data use createDataPartition fn
 
 library(caret)
 
-result <- data.frame(ndf)[,"Appr.flag"]
+result <- data.frame(ndf)[,"Target"]
 train_idx <- createDataPartition(result, p = 0.8, list = FALSE)
 rm(result)
 
 # 5.3) Training model
 df <- ndf %>%
-  mutate(Appr.flag = factor(Appr.flag))
+  mutate(Target = factor(Target))
 
 train <- as.data.frame(df[train_idx, ])
 test <- as.data.frame(df[-train_idx, ])
@@ -291,7 +284,7 @@ glmnet_grid <- expand.grid(alpha = c(0,  .1,  .2, .4, .6, .8, 1),
 glmnet_ctrl <- trainControl(method = "cv", number = 10)
 
 # Training model with train() fn 
-glmnet_fit <- train(Appr.flag ~ ., data = train,
+glmnet_fit <- train(Target ~ ., data = train,
                     method = "glmnet",
                     # family = binomial,
                     na.action = na.omit,  # allow na in model
@@ -316,7 +309,7 @@ library(ROCR)
 
 # Create ROC Curve
 pred <- prediction(as.numeric(as.character(pred_result)), 
-                   as.numeric(as.character(test$Appr.flag)))  # Create ROCR::prediction object
+                   as.numeric(as.character(test$Target)))  # Create ROCR::prediction object
 
 # Create ROCR:performance object tpr = true positive, fpr = false positive
 pred.perf <- performance(pred, measure = "tpr", x.measure = "fpr")
@@ -326,4 +319,3 @@ plot(pred.perf)
 auc <- performance(pred, measure = "auc")  # Create ROCR:performance object auc = accuracy
 auc <- auc@y.values[[1]]
 auc
-
