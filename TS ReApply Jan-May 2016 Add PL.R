@@ -1,4 +1,5 @@
 ## 1) Load data ----
+
 library(readxl)
 
 lead <- read_excel("/Users/Danny/Documents/R Project/KTC.Tele.ReApply/List Reapply_Jan-May'16_78577 11.43.10 PM.xlsx", 
@@ -91,47 +92,92 @@ l <- lead %>%
 
 library(dplyr)
 
-# Combine CC data 15-16 filter only Branch = REJ , latest result
-cc1516Rej <- cc15 %>%
+# 3.1) Select only combineable varibles from cc and pl
+# List column names & find common column names
+n.cc <- names(cc15)
+n.pl <- names(pl15)
+join.col <- n.cc[n.cc %in% n.pl]
+
+# Rename cc and pl column for data mearge
+pl15 <- pl15 %>%
+  rename(SubType = LoanType) %>%
+  rename(Monthly_Salary = Income) %>%
+  rename(firstUsedAmt = DrawDown)
+
+pl16 <- pl16 %>%
+  rename(SubType = LoanType) %>%
+  rename(Monthly_Salary = Income) %>%
+  rename(firstUsedAmt = DrawDown)
+
+cc15 <- cc15 %>%
+  rename(firstUsedAmt = spending)
+
+cc16 <- cc16 %>%
+  rename(firstUsedAmt = spending)
+
+# List renames column names for common column
+n.cc <- names(cc15)
+n.pl <- names(pl15)
+join.col <- n.cc[n.cc %in% n.pl]
+
+# Cross check same column name for cc and pl
+# col.join <- n.pl[n.pl %in% n.cc]
+# sum(!(join.col %in% col.join))
+
+# Select only same names
+cc15 <- cc15[ ,join.col]
+cc16 <- cc16[ ,join.col]
+pl15 <- pl15[ ,join.col]
+pl16 <- pl16[ ,join.col]
+
+rm(list = c("join.col", "n.cc", "n.pl"))
+
+# 3.2) Combine CC & PL data 15-16 filter only Branch = REJ
+dat <- cc15 %>%
+  bind_rows(pl15) %>%
   bind_rows(cc16) %>%
-  filter(Branch_Code == "REJ") %>%
-  arrange(ID, desc(ApproveDate)) %>%  # in case of duplicate REJ choose last one on top
-  filter(!duplicated(ID)) %>% # Select the first obs 
+  bind_rows(pl16) %>%
+  filter(Branch_Code == "REJ")  # only in Reject project
+
+# Check duplication ID
+dup <- dat %>%
+  arrange(ID, desc(ApproveDate)) %>%
+  group_by(ID) %>%
+  summarise(n = n()) %>%
+  filter(n > 1)
+
+# Test the duplication data
+dat.dup <- dat %>%
+  filter(ID %in% dup$ID) %>%
+  arrange(ID)
+
+# Accept duplication assume different obs
+rm(list = c("cc15", "cc16", "dat.dup", "pl15", "pl16", "dup", "lead"))
+
+
+# 3.3) Prepare data for Machine Learnin Model
+dat.rej <- dat %>%
   left_join(occupation, by = c("Occupation" = "Desc")) %>%
   rename(OccupationCode = Code) %>%
   mutate(Left2_Zipcode = substr(Zipcode, 1, 2)) %>%
   left_join(province) %>%
-  select(-c(3:9), -Work_Place, -Spending_Range, -Spending60, -Occupation,
-         -Income_Range, -QUEUE, -Channel, -Channel_Group, -Left2_Zipcode, -Province_Tha, -Region_Tha,
-         -RefCode, -City_Type, -Province_Eng, -Region_Eng)
-
-# Create pre Reject project data
-preRej <- cc15 %>%
-  arrange(ID, ApproveDate) %>%
-  filter(!duplicated(ID)) %>%
-  left_join(occupation, by = c("Occupation" = "Desc")) %>%
-  rename(OccupationCode = Code) %>%
-  mutate(Left2_Zipcode = substr(Zipcode, 1, 2)) %>%
-  left_join(province) %>%
-  select(-c(3:9), -Work_Place, -Spending_Range, -Spending60, -Occupation,
-         -Income_Range, -QUEUE, -Channel, -Channel_Group, -Left2_Zipcode, -Province_Tha, -Region_Tha,
-         -RefCode, -City_Type, -Province_Eng, -Region_Eng)
-
-# Join after Reject project <- Pre Project
-cc1516RejPre <- cc1516Rej %>%
-  left_join(preRej, by = c("ID" =  "ID")) %>%
-  mutate(Appl_In_Date.x = as.Date(Appl_In_Date.x, format("%d/%m/%Y"))) %>%
-  mutate(Appl_In_Date.y = as.Date(Appl_In_Date.y, format("%d/%m/%Y"))) %>%
-  mutate_each(funs(as.Date), ApproveDate.x, ApproveDate.y, DOB.x, DOB.y) %>%
-  # Remove Occupation Code = n/a
-  filter(!is.na(OccupationCode.x) & !is.na(OccupationCode.y)) %>%
-  # Create features for analysis
-  mutate(Monthly.Salary.diff = Monthly_Salary.x - Monthly_Salary.y) %>%
-  mutate(OccupationCode.diff.flag = ifelse(OccupationCode.x == OccupationCode.y, 0, 1)) %>%
-  mutate(ZipCode.diff.flag = ifelse(Zipcode.x == Zipcode.y, 0, 1)) %>%
-  mutate(Doc_Waive.y.flag = if_else(is.na(Doc_Waive.y), 0, 1))
-
-rm(list = c("cc1516Rej", "lead", "preRej", "province"))
+  select(-c(1:9), -c(11:12), -Channel, -Channel_Group, -Left2_Zipcode, -Province_Tha, -Region_Tha,
+         -RefCode, -City_Type, -Province_Eng, -Region_Eng, -Criteria_Code, -Branch_Code,
+         -SubType, -Branch_Code, -Occupation, -Work_Place, -Doc_Waive, -Flag_Test, -OccupationCode,
+         -Zipcode, -DOB, -Income_Range, -New.Exist, -Income15_per_Head_per_Year, -firstUsedAmt, 
+         -LineLimit) %>%
+  filter(Product != "FIX") %>%
+  filter(Monthly_Salary > 10000 | is.na(Monthly_Salary)) %>%
+  filter(Age < 1 | !is.na(Age)) %>%
+  # Create target varible Result in D, R = 0 , Result in A & Product = CC -> 1, 
+  # Result in A & Product = PL -> 1
+  mutate(Target = if_else(Result == "A" & Product == "CC", "1", 
+         if_else(Result == "A" & Product == "PROUD", "2", "0"))) %>%
+  # Flag decline reason realted to Cash & Debt 
+  mutate(Decline.Cash = if_else(Result_Description %in% 
+                                 c("D01", "D02", "D09", "D10", "D11", "D21", 
+                                   "D22", "D23", "D24"), "1", "0")) %>%
+  select(-Product, -Result, -Result_Description)
 
 ## 4) Machine Learning with Generalized Linear Model methods creation ----
 
